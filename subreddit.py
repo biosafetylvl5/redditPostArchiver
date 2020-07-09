@@ -211,16 +211,16 @@ def reddit_submission_update(appcfg, update_length=604800):
                 for rdsub in rd_submissions:
                     updatedtime = arrow.now().timestamp
                     if rdsub.author is None and rdsub.selftext == '[deleted]':
-                        Submission.update(score=rdsub.score, retrieved_on=updatedtime, deleted=True).where(
+                        Submission.update(score=rdsub.score, retrieved_on=updatedtime, link_flair_text=rdsub.link_flair_text, deleted=True).where(
                             Submission.link_id == rdsub.id).execute()
                     elif rdsub.selftext == '[deleted]':
-                        Submission.update(score=rdsub.score, retrieved_on=updatedtime, deleted=False).where(
+                        Submission.update(score=rdsub.score, retrieved_on=updatedtime, link_flair_text=rdsub.link_flair_text, deleted=False).where(
                             Submission.link_id == rdsub.id).execute()
                     elif rdsub.author is None:
-                        Submission.update(score=rdsub.score, selftext=rdsub.selftext_html, retrieved_on=updatedtime,
+                        Submission.update(score=rdsub.score, selftext=rdsub.selftext_html, retrieved_on=updatedtime, link_flair_text=rdsub.link_flair_text,
                                           deleted=True).where(Submission.link_id == rdsub.id).execute()
                     else:
-                        Submission.update(score=rdsub.score, selftext=rdsub.selftext_html, retrieved_on=updatedtime,
+                        Submission.update(score=rdsub.score, selftext=rdsub.selftext_html, retrieved_on=updatedtime, link_flair_text=rdsub.link_flair_text,
                                           deleted=False).where(Submission.link_id == rdsub.id).execute()
                     pbar.update(1)
 

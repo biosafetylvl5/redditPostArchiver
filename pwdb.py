@@ -65,12 +65,14 @@ class Submission(BaseModel):
     class Meta:
         table_name = 'submission'
 
-    link_id = TextField(unique=True)  # 7ub3rk",
+    link_id = TextField(unique=True)  # "ao38em",
     author = ForeignKeyField(Author, backref='submission')
     author_flair = ForeignKeyField(AuthorFlair, backref='submission', default=None, null=True)  # verified",
     created_utc = TimestampField(index=True)  # 1517416133,
-    title = TextField()  # Playing with dolls (f)",
+    title = TextField()  # The opposite of r/ChoosingBeggars - my wife trying to sell her car.
     domain = ForeignKeyField(Domain, backref='submission', default=None, null=True)  # imgur.com",
+    full_link = TextField(default=None, null=True)
+    link_flair_text = TextField(default=None, null=True)
     is_crosspostable = BooleanField(default=None, null=True)  # true,
     is_reddit_media_domain = BooleanField(default=None, null=True)  # false,
     is_self = BooleanField(default=None, null=True)  # false,
@@ -86,10 +88,10 @@ class Submission(BaseModel):
     selftext = TextField(default=None, null=True)  # ",
     spoiler = BooleanField(default=None, null=True)  # false,
     stickied = BooleanField(default=None, null=True)  # false,
-    subreddit = ForeignKeyField(Subreddit, backref='submission')  # gonewild",
+    subreddit = ForeignKeyField(Subreddit, backref='submission')  # humansbeingbros",
     thumbnail = ForeignKeyField(Url, default=None, null=True)  # default",
     view_count = IntegerField(default=None, null=True)
-    permalink = TextField(default=None, null=True)  # /r/gonewild/comments/7ub3rk/playing_with_dolls_f/",
+    permalink = TextField(default=None, null=True)  # /r/HumansBeingBros/comments/ao38em/the_opposite_of_rchoosingbeggars_my_wife_trying/
     deleted = BooleanField(default=None, null=True, index=True)
 
 
