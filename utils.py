@@ -13,12 +13,10 @@ def extract_urls(body):
             if len(url) < 5 or '.' not in url:
                 continue
             if url.count('http') == 1:
-                try:
-                    url = url.split('http')[1]
+                url = url.split('http')[1]
                 url = 'http{}'.format(url)
             if '(' in url:
-                try:
-                    rurl = url.split('(')
+                rurl = url.split('(')
                 if extractor.has_urls(rurl[1]):
                     url = rurl[1]
                 elif extractor.has_urls(rurl[0]):
@@ -26,8 +24,7 @@ def extract_urls(body):
                 else:
                     continue
             if ')' in url:
-                try:
-                    lurl = url.split(')')
+                lurl = url.split(')')
                 if extractor.has_urls(lurl[0]):
                     url = lurl[0]
                 elif extractor.has_urls(lurl[1]):
@@ -68,7 +65,7 @@ def extract_urls(body):
             # """
             urlset.add(url)
         return urlset
-    except IndexError as e:
+    except AttributeError as e:
         raise e
         print("While generating urls, an AttributeError (specifically {e}) was raised. Moving on without extracting urls for now. This is likely an error with the python library URLExtract (https://github.com/lipoja/URLExtract). The issue has been fixed (see issue fix here: https://github.com/lipoja/URLExtract/commit/aa51f52e77b104932c49fb14882c632f12b6e940) but is has not included in the most recent release. Please install the version from GitHub to fix this issue (eg. pip3 install git+https://github.com/lipoja/URLExtract.git".format(e=e))
     finally:

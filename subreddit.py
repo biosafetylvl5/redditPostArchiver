@@ -281,7 +281,7 @@ def get_push_submissions(appcfg, newestdate, oldestdate):
     sub_id = sub.id
     push_post_id_set = set()
     total_available = "https://api.pushshift.io/reddit/search/submission/?subreddit={subreddit}" \
-                      "&after={oldestdate}&before={newestdate}&aggs=subreddit&size=0"
+                      "&after={oldestdate}&before={newestdate}&aggs=subreddit"#&size=0"
     turl = total_available.format(subreddit=appcfg.subreddit, oldestdate=oldestdate, newestdate=newestdate)
     with requests.get(turl) as tp:
         # newestdate = appcfg.newestdate
@@ -293,187 +293,193 @@ def get_push_submissions(appcfg, newestdate, oldestdate):
     try:
         total_submissions = tpush['aggs']['subreddit'][0]['bg_count']
     except KeyError:
-        total_submissions = tpush['aggs']['subreddit'][0]['doc_count']
+        try:
+            total_submissions = tpush['aggs']['subreddit'][0]['doc_count']
+        except KeyError:
+            print("Aggs seem to be disabled. Progress output disabled.")
+            total_submissions = None
     except (IndexError, KeyError):
         print("     No new submissions to process from pushshift API")
         return push_post_id_set
     linktemplate = "https://api.pushshift.io/reddit/search/submission/?subreddit={subreddit}" \
                    "&after={oldestdate}&before={newestdate}&sort=desc&size=500"
-    with tqdm(total=total_submissions, ncols=100, dynamic_ncols=False) as pbar:
-        while subnumber > 0:
-            url = linktemplate.format(subreddit=appcfg.subreddit, oldestdate=oldestdate, newestdate=newestdate)
-            with requests.get(url) as rp:
-                if rp.status_code != 200:
-                    print("     Connection Error for Pushshift API, quitting...")
-                    # quit()
-                    return push_post_id_set
-                push = rp.json()
-            subnumber = len(push['data'])
-            # pbar.update(subnumber)
-            with appcfg.database.atomic():
-                for item in push['data']:
-                    post_id = "{}\n".format(item['id'])
-                    item['link_id'] = item.pop('id')
-                    push_post_id_set.add(post_id)
-                    if item['created_utc'] < newestdate:
-                        newestdate = item['created_utc']
-                    item['subreddit'] = sub_id
-                    if item['author_flair_text'] is not None:
-                        author_flair, author_flair_created = AuthorFlair.get_or_create(text=item['author_flair_text'])
-                        item['author_flair'] = author_flair.id
+    if total_submissions:
+        pbar = tqdm(total=total_submissions, ncols=100, dynamic_ncols=False)
+    while subnumber > 0:
+        url = linktemplate.format(subreddit=appcfg.subreddit, oldestdate=oldestdate, newestdate=newestdate)
+        with requests.get(url) as rp:
+            if rp.status_code != 200:
+                print("     Connection Error for Pushshift API, quitting...")
+                # quit()
+                return push_post_id_set
+            push = rp.json()
+        subnumber = len(push['data'])
+        # pbar.update(subnumber)
+        with appcfg.database.atomic():
+            for item in push['data']:
+                post_id = "{}\n".format(item['id'])
+                item['link_id'] = item.pop('id')
+                push_post_id_set.add(post_id)
+                if item['created_utc'] < newestdate:
+                    newestdate = item['created_utc']
+                item['subreddit'] = sub_id
+                if item['author_flair_text'] is not None:
+                    author_flair, author_flair_created = AuthorFlair.get_or_create(text=item['author_flair_text'])
+                    item['author_flair'] = author_flair.id
+                else:
+                    item['author_flair'] = None
+                author, author_created = Author.get_or_create(name=item['author'])
+                item['author'] = author.id
+                try:
+                    media, mediacreated = Url.get_or_create(link=item['media']['oembed']['thumbnail_url'])
+                    item['media'] = media.id
+                except KeyError:
+                    item['media'] = None
+                except TypeError as e:
+                   if not item["media"] == None:
+                       raise e
+                try:
+                    domain, domaincreated = Domain.get_or_create(value=item['domain'])
+                    item['domain'] = domain.id
+                except KeyError:
+                    item['domain'] = None
+                try:
+                    preview = item['preview']['images'][0]['source']['url']
+                    preview, previewcreated = Url.get_or_create(link=preview)
+                    item['preview'] = preview.id
+                except KeyError:
+                    item['preview'] = None
+                except TypeError:
+                    print(item['link_id'], item['preview'])
+                    item['preview'] = None
+                itemfields = Submission._meta.fields.keys()
+                insertdict = dict()
+                for key in item.keys():
+                    if key in itemfields:
+                        insertdict[key] = item[key]
+                if 'thumbnail' in insertdict.keys():
+                    if insertdict['thumbnail'] is not None and not insertdict['thumbnail'].startswith('http'):
+                        insertdict['thumbnail'] = None
+                    elif insertdict['thumbnail'] is None:
+                        pass
                     else:
-                        item['author_flair'] = None
-                    author, author_created = Author.get_or_create(name=item['author'])
-                    item['author'] = author.id
-                    try:
-                        media, mediacreated = Url.get_or_create(link=item['media']['oembed']['thumbnail_url'])
-                        item['media'] = media.id
-                    except KeyError:
-                        item['media'] = None
-                    except TypeError as e:
-                       if not item["media"] == None:
-                           raise e
-                    try:
-                        domain, domaincreated = Domain.get_or_create(value=item['domain'])
-                        item['domain'] = domain.id
-                    except KeyError:
-                        item['domain'] = None
-                    try:
-                        preview = item['preview']['images'][0]['source']['url']
-                        preview, previewcreated = Url.get_or_create(link=preview)
-                        item['preview'] = preview.id
-                    except KeyError:
-                        item['preview'] = None
-                    except TypeError:
-                        print(item['link_id'], item['preview'])
-                        item['preview'] = None
-                    itemfields = Submission._meta.fields.keys()
-                    insertdict = dict()
-                    for key in item.keys():
-                        if key in itemfields:
-                            insertdict[key] = item[key]
-                    if 'thumbnail' in insertdict.keys():
-                        if insertdict['thumbnail'] is not None and not insertdict['thumbnail'].startswith('http'):
-                            insertdict['thumbnail'] = None
-                        elif insertdict['thumbnail'] is None:
-                            pass
-                        else:
-                            try:
-                                thumb, thumbcreated = Url.get_or_create(link=insertdict['thumbnail'])
-                                insertdict['thumbnail'] = thumb.id
-                            except KeyError:
-                                insertdict['thumbnail'] = None
-                    try:
-                        link_id = Submission.insert(insertdict).execute()
-                    except IntegrityError:
-                        submission = Submission.get(link_id=insertdict['link_id'])
-                        link_id = submission.id
                         try:
-                            if int(submission.retrieved_on.timestamp()) <= insertdict['retrieved_on']:
-                                submission.score = insertdict['score']
-                                submission.num_comments = insertdict['num_comments']
-                                if author.name == '[deleted]':
-                                    submission.deleted = True
-                                submission.save()
-                            elif author.name == '[deleted]':
-                                submission.deleted = True
-                                submission.save()
-                        except AttributeError:
-                            # print("Type Error when querying", submission.link_id)
-                            submission.retrieved_on = submission.created_utc
-                            submission.save()
-                            continue
+                            thumb, thumbcreated = Url.get_or_create(link=insertdict['thumbnail'])
+                            insertdict['thumbnail'] = thumb.id
                         except KeyError:
-                            # print("Type Error when querying", submission.link_id)
-                            submission.retrieved_on = arrow.now().timestamp
+                            insertdict['thumbnail'] = None
+                try:
+                    link_id = Submission.insert(insertdict).execute()
+                except IntegrityError:
+                    submission = Submission.get(link_id=insertdict['link_id'])
+                    link_id = submission.id
+                    try:
+                        if int(submission.retrieved_on.timestamp()) <= insertdict['retrieved_on']:
                             submission.score = insertdict['score']
+                            submission.num_comments = insertdict['num_comments']
+                            if author.name == '[deleted]':
+                                submission.deleted = True
                             submission.save()
-                            continue
-                        # link_id = submission.id
-                    # submission, submission_created = Submission.get_or_create(**insertdict)
-                    urllist = item['url'].split()
-                    excluded = ['.id', '.you', '.lol', '.like', '.now', '.my', '.love', '.phone', '.how', '.post',
-                                '.me', '.got',
-                                '.hot', '.im', '.best']
-                    for url in urllist:
+                        elif author.name == '[deleted]':
+                            submission.deleted = True
+                            submission.save()
+                    except AttributeError:
+                        print("Type Error when querying", submission.link_id)
+                        submission.retrieved_on = submission.created_utc
+                        submission.save()
+                        continue
+                    except KeyError:
+                        print("Type Error when querying", submission.link_id)
+                        submission.retrieved_on = arrow.now().timestamp
+                        submission.score = insertdict['score']
+                        submission.save()
+                        continue
+                    # link_id = submission.id
+                # submission, submission_created = Submission.get_or_create(**insertdict)
+                urllist = item['url'].split()
+                excluded = ['.id', '.you', '.lol', '.like', '.now', '.my', '.love', '.phone', '.how', '.post',
+                            '.me', '.got',
+                            '.hot', '.im', '.best']
+                for url in urllist:
 
-                        if len(url) < 5 or '.' not in url:
-                            continue
-                        if url.count('http') == 1:
-                            url = url.split('http')[1]
-                            url = 'http{}'.format(url)
-                        if '(' in url:
-                            rurl = url.split('(')
-                            if rurl[1].count('http') == 1:
-                                url = rurl[1]
-                            elif rurl[0].count('http') == 1:
-                                url = rurl[0]
-                            else:
-                                continue
-                        if ')' in url:
-                            lurl = url.split(')')
-                            if lurl[0].count('http') == 1:
-                                url = lurl[0]
-                            elif lurl[1].count('http') == 1:
-                                url = lurl[1]
-                            else:
-                                continue
-                        sem = 0
-                        for suffix in excluded:
-                            if url.endswith(suffix):
-                                sem = 1
-                        if sem == 1:
-                            continue
-                        # """
-                        if 'http://[IMG]http://' in url:
-                            url = url.replace('http://[IMG]http://', '')
-                        if '[/IMG]' in url:
-                            url = url.replace('[/IMG]', '')
-                        if 'http://[img]http://' in url:
-                            url = url.replace('http://[img]http://', '')
-                        if '[/img]' in url:
-                            url = url.replace('[/img]', '')
-                        if url.endswith('?noredirect'):
-                            url = url.replace('?noredirect', '')
-                        elif url.endswith('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium'):
-                            url = url.replace('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium', '')
-                        elif url.endswith('?s=sms'):
-                            url = url.replace('?s=sms', '')
-                        if '//m.imgur.com' in url:
-                            url = url.replace('//m.imgur.com', '//imgur.com')
-                        if url.startswith('https://thumbs.gfycat.com/'):
-                            url = url.replace('https://thumbs.gfycat.com/', 'https://gfycat.com/')
-                        if url.endswith('-size_restricted.gif'):
-                            url = url.replace('-size_restricted.gif', '')
-                        # """
-                        if url.endswith('?fb'):
-                            url = url.replace('?fb', '')
-                        elif url.endswith('?noredirect'):
-                            url = url.replace('?noredirect', '')
-                        elif url.endswith('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium'):
-                            url = url.replace('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium', '')
-                        elif url.endswith('?s=sms'):
-                            url = url.replace('?s=sms', '')
-                        if '//m.imgur.com' in url:
-                            url = url.replace('//m.imgur.com', '//imgur.com')
-                        if url.startswith('https://thumbs.gfycat.com/'):
-                            url = url.replace('https://thumbs.gfycat.com/', 'https://gfycat.com/')
-                        if url.endswith('-size_restricted.gif'):
-                            url = url.replace('-size_restricted.gif', '')
-                        if 'imgur.com' in url and ',' in url:
-                            imgurlist = url.split(',')
-                            url, urlcreated = Url.get_or_create(link=imgurlist[0])
-                            SubmissionLinks.get_or_create(post=link_id, url=url.id)
-                            for img in imgurlist[1:]:
-                                img = "http://imgur.com/{img}".format(img=img)
-                                url, urlcreated = Url.get_or_create(link=img)
-                                SubmissionLinks.get_or_create(post=link_id, url=url.id)
+                    if len(url) < 5 or '.' not in url:
+                        continue
+                    if url.count('http') == 1:
+                        url = url.split('http')[1]
+                        url = 'http{}'.format(url)
+                    if '(' in url:
+                        rurl = url.split('(')
+                        if rurl[1].count('http') == 1:
+                            url = rurl[1]
+                        elif rurl[0].count('http') == 1:
+                            url = rurl[0]
                         else:
-                            url, urlcreated = Url.get_or_create(link=url)
-                            try:
-                                SubmissionLinks.get_or_create(post=link_id, url=url.id)
-                            except IndexError:
-                                print("IndexError when attempting to parse submission:", url.id)
+                            continue
+                    if ')' in url:
+                        lurl = url.split(')')
+                        if lurl[0].count('http') == 1:
+                            url = lurl[0]
+                        elif lurl[1].count('http') == 1:
+                            url = lurl[1]
+                        else:
+                            continue
+                    sem = 0
+                    for suffix in excluded:
+                        if url.endswith(suffix):
+                            sem = 1
+                    if sem == 1:
+                        continue
+                    # """
+                    if 'http://[IMG]http://' in url:
+                        url = url.replace('http://[IMG]http://', '')
+                    if '[/IMG]' in url:
+                        url = url.replace('[/IMG]', '')
+                    if 'http://[img]http://' in url:
+                        url = url.replace('http://[img]http://', '')
+                    if '[/img]' in url:
+                        url = url.replace('[/img]', '')
+                    if url.endswith('?noredirect'):
+                        url = url.replace('?noredirect', '')
+                    elif url.endswith('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium'):
+                        url = url.replace('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium', '')
+                    elif url.endswith('?s=sms'):
+                        url = url.replace('?s=sms', '')
+                    if '//m.imgur.com' in url:
+                        url = url.replace('//m.imgur.com', '//imgur.com')
+                    if url.startswith('https://thumbs.gfycat.com/'):
+                        url = url.replace('https://thumbs.gfycat.com/', 'https://gfycat.com/')
+                    if url.endswith('-size_restricted.gif'):
+                        url = url.replace('-size_restricted.gif', '')
+                    # """
+                    if url.endswith('?fb'):
+                        url = url.replace('?fb', '')
+                    elif url.endswith('?noredirect'):
+                        url = url.replace('?noredirect', '')
+                    elif url.endswith('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium'):
+                        url = url.replace('_d.jpg?maxwidth=640&amp;shape=thumb&amp;fidelity=medium', '')
+                    elif url.endswith('?s=sms'):
+                        url = url.replace('?s=sms', '')
+                    if '//m.imgur.com' in url:
+                        url = url.replace('//m.imgur.com', '//imgur.com')
+                    if url.startswith('https://thumbs.gfycat.com/'):
+                        url = url.replace('https://thumbs.gfycat.com/', 'https://gfycat.com/')
+                    if url.endswith('-size_restricted.gif'):
+                        url = url.replace('-size_restricted.gif', '')
+                    if 'imgur.com' in url and ',' in url:
+                        imgurlist = url.split(',')
+                        url, urlcreated = Url.get_or_create(link=imgurlist[0])
+                        SubmissionLinks.get_or_create(post=link_id, url=url.id)
+                        for img in imgurlist[1:]:
+                            img = "http://imgur.com/{img}".format(img=img)
+                            url, urlcreated = Url.get_or_create(link=img)
+                            SubmissionLinks.get_or_create(post=link_id, url=url.id)
+                    else:
+                        url, urlcreated = Url.get_or_create(link=url)
+                        try:
+                            SubmissionLinks.get_or_create(post=link_id, url=url.id)
+                        except IndexError:
+                            print("IndexError when attempting to parse submission:", url.id)
+        if total_submissions:
             pbar.update(subnumber)
     return push_post_id_set
 
