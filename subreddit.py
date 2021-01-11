@@ -504,57 +504,63 @@ def get_push_comments(appcfg, newestdate, oldestdate):
             return push_comment_id_set
         tpush = tp.json()
     try:
-        total_comments = tpush['aggs']['subreddit'][0]['doc_count']
+        if "doc_count" in tpush['aggs']['subreddit'][0].keys():
+            total_comments = tpush['aggs']['subreddit'][0]["doc_count"]
+        else:
+            print("     No new comments to process from pushshift API for", appcfg.subreddit)
+            return push_comment_id_set
     except (IndexError, KeyError):
-        print("     No new comments to process from pushshift API for", appcfg.subreddit)
-        return push_comment_id_set
+        print("Pushshift aggregations seem to be disabled. Progress output disabled.")
+        total_comments = None
     linktemplate = "https://api.pushshift.io/reddit/search/comment/?subreddit={subreddit}" \
                    "&after={oldestdate}&before={newestdate}&sort=desc&size=500"
-    with tqdm(total=total_comments, ncols=100, dynamic_ncols=False) as pbar:
-        while subnumber > 0:
-            url = linktemplate.format(subreddit=appcfg.subreddit, oldestdate=oldestdate, newestdate=newestdate)
-            with requests.get(url) as rp:
-                try:
-                    push = rp.json()
-                except JSONDecodeError:
-                    print("     JSON DECODE ERROR on Pushshift API Comments", url)
-                    time.sleep(10)
+    if total_comments:
+        pbar = tqdm(total=total_comments, ncols=100, dynamic_ncols=False)
+    while subnumber > 0:
+        url = linktemplate.format(subreddit=appcfg.subreddit, oldestdate=oldestdate, newestdate=newestdate)
+        with requests.get(url) as rp:
+            try:
+                push = rp.json()
+            except JSONDecodeError:
+                print("     JSON DECODE ERROR on Pushshift API Comments", url)
+                time.sleep(10)
+                continue
+                # return push_comment_id_set
+        subnumber = len(push['data'])
+        totalsubnumber += subnumber
+        commentlinktemplate = 'https://www.reddit.com/comments/{link_id}/_/{comment_id}/.json\n'
+        with appcfg.database.atomic():
+            for item in push['data']:
+                if 'id' not in item.keys():
+                    print('The following item has no primary comment ID:', item)
                     continue
-                    # return push_comment_id_set
-            subnumber = len(push['data'])
-            totalsubnumber += subnumber
-            commentlinktemplate = 'https://www.reddit.com/comments/{link_id}/_/{comment_id}/.json\n'
-            with appcfg.database.atomic():
-                for item in push['data']:
-                    if 'id' not in item.keys():
-                        print('The following item has no primary comment ID:', item)
-                        continue
-                    else:
-                        item['comment_id'] = item.pop('id')
-                    try:
-                        link_id = item['link_id']
-                        item['link_id'] = link_id.replace('t3_', '')
-                        commentlink = commentlinktemplate.format(link_id=item['link_id'], comment_id=item['comment_id'])
-                        push_comment_id_set.add(commentlink)
-                    except KeyError:
-                        print('The following item has no submission link ID:', item)
-                        continue
-                    if item['created_utc'] < newestdate:
-                        newestdate = item['created_utc']
-                    item['subreddit'] = sub_id
-                    if 'author_flair_text' in item.keys() and item['author_flair_text'] is not None:
-                        author_flair, author_flaircreated = AuthorFlair.get_or_create(text=item['author_flair_text'])
-                        item['author_flair'] = author_flair.id
-                    else:
-                        item['author_flair'] = None
-                    author, author_created = Author.get_or_create(name=item['author'])
-                    item['author'] = author.id
-                    itemfields = Comment._meta.fields.keys()
-                    insertdict = dict()
-                    for key in item.keys():
-                        if key in itemfields:
-                            insertdict[key] = item[key]
-                    Comment.insert(insertdict).on_conflict_ignore().execute()
+                else:
+                    item['comment_id'] = item.pop('id')
+                try:
+                    link_id = item['link_id']
+                    item['link_id'] = link_id.replace('t3_', '')
+                    commentlink = commentlinktemplate.format(link_id=item['link_id'], comment_id=item['comment_id'])
+                    push_comment_id_set.add(commentlink)
+                except KeyError:
+                    print('The following item has no submission link ID:', item)
+                    continue
+                if item['created_utc'] < newestdate:
+                    newestdate = item['created_utc']
+                item['subreddit'] = sub_id
+                if 'author_flair_text' in item.keys() and item['author_flair_text'] is not None:
+                    author_flair, author_flaircreated = AuthorFlair.get_or_create(text=item['author_flair_text'])
+                    item['author_flair'] = author_flair.id
+                else:
+                    item['author_flair'] = None
+                author, author_created = Author.get_or_create(name=item['author'])
+                item['author'] = author.id
+                itemfields = Comment._meta.fields.keys()
+                insertdict = dict()
+                for key in item.keys():
+                    if key in itemfields:
+                        insertdict[key] = item[key]
+                Comment.insert(insertdict).on_conflict_ignore().execute()
+        if total_comments:
             pbar.update(subnumber)
     return push_comment_id_set
 
